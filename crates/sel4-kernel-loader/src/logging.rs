@@ -10,7 +10,7 @@ use sel4_logging::{LevelFilter, Logger, LoggerBuilder, SynchronizedLogger};
 
 use crate::fmt::debug_print;
 
-const LOG_LEVEL: LevelFilter = LevelFilter::Debug;
+const LOG_LEVEL: LevelFilter = LevelFilter::Info;
 
 static LOGGER: SynchronizedLogger<Mutex<()>, Logger> = SynchronizedLogger::new(
     LoggerBuilder::const_default()
