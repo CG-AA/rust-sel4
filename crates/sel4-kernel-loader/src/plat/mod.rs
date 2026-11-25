@@ -16,6 +16,9 @@ sel4_cfg_if! {
     } else if #[sel4_cfg(all(ARCH_ARM, PLAT_BCM2712))] {
         #[path = "bcm2712/mod.rs"]
         mod imp;
+    } else if #[sel4_cfg(all(ARCH_ARM, PLAT_QCS6490))] {
+        #[path = "qcs6490/mod.rs"]
+        mod imp;
  } else if #[sel4_cfg(all(ARCH_RISCV, any(PLAT_SPIKE, PLAT_QEMU_RISCV_VIRT, PLAT_HIFIVE, PLAT_CV1800B_DUO)))] {
  #[path = "riscv_generic/mod.rs"]
  mod imp;
@@ -27,6 +30,8 @@ sel4_cfg_if! {
 mod bcm2711;
 #[cfg(false)]
 mod bcm2712;
+#[cfg(false)]
+mod qcs6490;
 #[cfg(false)]
 mod qemu_arm_virt;
 #[cfg(false)]
