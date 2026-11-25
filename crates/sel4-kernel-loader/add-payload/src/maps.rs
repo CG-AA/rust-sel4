@@ -51,18 +51,34 @@ pub(crate) fn mk_kernel_map(
     kernel_virt_addr_range: Range<u64>,
     kernel_phys_to_virt_offset: u64,
     thead_maee: bool,
+    platform_info: &OwnedPlatformInfo,
 ) -> (Vec<u8>, u64) {
     let virt_start = kernel_virt_addr_range.start;
     let virt_end = kernel_virt_addr_range.end;
     let virt_map_end = virt_end.next_multiple_of(1 << scheme.largest_leaf_size_bits());
 
-    let regions = RegionsBuilder::new(scheme)
+    // The loader runs its last instructions from the identity mapping, at
+    // its own address in platform memory. On AArch64 nothing else in that
+    // mapping is ever executed, so the rest is execute-never; see
+    // `mk_device_leaf_for_loader_map`.
+    let executable_everywhere = !matches!(scheme, Scheme::AArch64);
+    let mut regions = RegionsBuilder::new(scheme)
         .insert(Region::valid(0..virt_start, move |loc| {
-            mk_identity_leaf_for_kernel_map(thead_maee, loc)
-        }))
-        .insert(Region::valid(virt_start..virt_map_end, move |loc| {
-            mk_kernel_leaf_for_kernel_map(smp, kernel_phys_to_virt_offset, thead_maee, loc)
+            mk_identity_leaf_for_kernel_map(thead_maee, executable_everywhere, loc)
         }));
+    if !executable_everywhere {
+        for range in platform_info.memory.iter() {
+            let range = range.start..range.end.min(virt_start);
+            if range.start < range.end {
+                regions = regions.insert(Region::valid(range, move |loc| {
+                    mk_identity_leaf_for_kernel_map(thead_maee, true, loc)
+                }));
+            }
+        }
+    }
+    let regions = regions.insert(Region::valid(virt_start..virt_map_end, move |loc| {
+        mk_kernel_leaf_for_kernel_map(smp, kernel_phys_to_virt_offset, thead_maee, loc)
+    }));
 
     regions
         .build()
@@ -91,10 +107,17 @@ fn mk_normal_leaf_for_loader_map(smp: bool, loc: MkLeafArgs) -> RawDescriptor {
 
 fn mk_device_leaf_for_loader_map(loc: MkLeafArgs) -> RawDescriptor {
     match loc.scheme() {
+        // Execute-never: the loader runs from platform memory only, and a
+        // device mapping that may be executed lets the core fetch
+        // instructions from it speculatively. On a board whose firmware
+        // guards part of the address space, such a fetch is a violation the
+        // firmware answers with a reset: the Radxa Dragon Q6A reset within
+        // 200 ms of the loader turning its translation on.
         Scheme::AArch64 => loc
             .identity_descriptor::<schemes::AArch64LeafDescriptor>()
             .set_access_flag(true)
             .set_attribute_index(0)
+            .set_execute_never(true)
             .to_raw(),
         Scheme::AArch32 => loc
             .identity_descriptor::<schemes::AArch32LeafDescriptor>()
@@ -104,12 +127,17 @@ fn mk_device_leaf_for_loader_map(loc: MkLeafArgs) -> RawDescriptor {
     }
 }
 
-fn mk_identity_leaf_for_kernel_map(thead_maee: bool, loc: MkLeafArgs) -> RawDescriptor {
+fn mk_identity_leaf_for_kernel_map(
+    thead_maee: bool,
+    executable: bool,
+    loc: MkLeafArgs,
+) -> RawDescriptor {
     match loc.scheme() {
         Scheme::AArch64 => loc
             .identity_descriptor::<schemes::AArch64LeafDescriptor>()
             .set_access_flag(true)
             .set_attribute_index(0) // select MT_DEVICE_nGnRnE
+            .set_execute_never(!executable)
             .to_raw(),
         Scheme::AArch32 => loc
             .identity_descriptor::<schemes::AArch32LeafDescriptor>()
@@ -166,6 +194,37 @@ mod tests {
     use super::*;
 
     const THEAD_PMA: u64 = 0b0_1110_u64 << 59;
+
+    const AARCH64_XN: u64 = 1 << 54;
+
+    #[test]
+    fn aarch64_device_leaves_of_the_loader_map_are_execute_never() {
+        let scheme = Scheme::AArch64;
+        let device = MkLeafArgs::new_for_test(&scheme, 1, 0x4000_0000);
+        let normal = MkLeafArgs::new_for_test(&scheme, 1, 0x1_0000_0000);
+
+        assert_eq!(
+            mk_device_leaf_for_loader_map(device) & AARCH64_XN,
+            AARCH64_XN
+        );
+        assert_eq!(mk_normal_leaf_for_loader_map(false, normal) & AARCH64_XN, 0);
+    }
+
+    #[test]
+    fn aarch64_identity_leaves_of_the_kernel_map_are_executable_only_on_request() {
+        let scheme = Scheme::AArch64;
+        let outside = MkLeafArgs::new_for_test(&scheme, 1, 0x4000_0000);
+        let memory = MkLeafArgs::new_for_test(&scheme, 1, 0x1_0000_0000);
+
+        assert_eq!(
+            mk_identity_leaf_for_kernel_map(false, false, outside) & AARCH64_XN,
+            AARCH64_XN
+        );
+        assert_eq!(
+            mk_identity_leaf_for_kernel_map(false, true, memory) & AARCH64_XN,
+            0
+        );
+    }
 
     #[test]
     fn thead_maee_marks_riscv_kernel_leaves() {

@@ -187,6 +187,13 @@ impl AArch64LeafDescriptor {
         self.raw.set_bit_range(9, 8, shareability);
         self
     }
+
+    // XN, bit 54 of a stage 1 block or page descriptor in a translation
+    // regime with one privilege level, as EL2's is.
+    pub(crate) fn set_execute_never(mut self, value: bool) -> Self {
+        self.raw.set_bit(54, value);
+        self
+    }
 }
 
 #[derive(Debug)]

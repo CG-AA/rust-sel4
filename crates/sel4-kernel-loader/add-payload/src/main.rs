@@ -186,6 +186,7 @@ where
                     masked_virt_addr_range,
                     phys_to_virt_offset,
                     thead_maee,
+                    &platform_info,
                 );
                 addr_slot = Some(root_vaddr);
                 bytes
